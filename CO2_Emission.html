@@ -1,0 +1,215 @@
+---
+title: "MINI PROJECT 2 "
+date: " Ngày thực hành: 2024-12-2"
+output: 
+  html_document:
+    css: styles.css
+---
+
+<style>
+  h1 {
+    text-align: center;  /* Căn giữa tiêu đề */
+  }
+  .author {
+    text-align: center;  /* Căn giữa phần tác giả */
+    font-size: 24px;    /* Kích thước chữ cho tác giả */
+  }
+  .date {
+    text-align: right;   /* Căn phải phần ngày */
+    margin-top: -20px;  /* Điều chỉnh khoảng cách nếu cần */
+  }
+</style>
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(janitor)
+library(ggplot2)
+library(tidyverse)
+library(leaps)
+library(splines)
+library(janitor)
+library(stringr)
+library(fastDummies)
+library(corrplot)
+library(car)
+```
+## Project 3 - Xe ô tô và lượng phát thải khí CO2 <br>
+
+## 1. Tóm tắt, khái quát dữ liệu
+```{r load data,echo=TRUE}
+data <- read_csv(file = "C:/Users/Dell/Downloads/vehicle_co2_emissions.csv")
+data <- data |> clean_names() |> remove_empty("cols") |> remove_empty("rows") |> drop_na()
+glimpse(data)
+summary(data)
+```
+```{r box plot ,echo=TRUE}
+# Box plot for Transmission Type
+ggplot(data, aes(x = as.factor(transmission), y = co2_emissions_g_km)) +
+  geom_boxplot() +
+  labs(title = "CO2 Emissions by Transmission Type", x = "Transmission Type", y = "CO2 Emissions")
+
+# Box plot for Vehicle Class
+ggplot(data, aes(x = vehicle_class, y = co2_emissions_g_km)) +
+  geom_boxplot() +
+  labs(title = "CO2 Emissions by Vehicle Class", x = "Vehicle Class", y = "CO2 Emissions") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Box plot for Fuel Type
+ggplot(data, aes(x = as.factor(fuel_type), y = co2_emissions_g_km)) +
+  geom_boxplot() +
+  labs(title = "CO2 Emissions by Fuel Type", x = "Fuel Type", y = "CO2 Emissions")
+
+# Scatter Plot of CO2 Emissions
+plot(data$co2_emissions_g_km, main = "Distribution of CO2 Emissions",
+     xlab = "Observation Number", ylab = "CO2 Emissions (g/km)")
+```
+## 2. Xây dựng mô hình cho lượng khí thải carbon dioxide từ ô tô.
+Bỏ 3 cột make, model, fuel_comsumption_comb_mpg bằng cách chọn 9 cột còn lại
+```{r build model, echo=TRUE}
+data = data %>% 
+  select(
+    vehicle_class,
+    engine_size_l,
+    cylinders,
+    transmission,
+    fuel_type,
+    fuel_consumption_city_l_100_km,
+    fuel_consumption_hwy_l_100_km,
+    fuel_consumption_comb_l_100_km,
+    co2_emissions_g_km
+  )
+
+#Mã hóa Vehicle Class thành dạng số 
+
+#Vẽ biểu đồ trước khi mã hóa
+ggplot(data, aes(x = vehicle_class)) +
+  geom_bar() +
+  labs(title = "Vehicle Classes", x = "Vehicle Class", y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+#Mã hóa
+class <- c(
+  "TWO-SEATER",
+  "MINICOMPACT",
+  "SUBCOMPACT",
+  "COMPACT",
+  "MID-SIZE",
+  "FULL-SIZE",
+  "STATION WAGON - SMALL",
+  "STATION WAGON - MID-SIZE",
+  "SUV - SMALL",
+  "SUV - STANDARD",
+  "MINIVAN",
+  "VAN - PASSENGER",
+  "VAN - CARGO",
+  "PICKUP TRUCK - SMALL",
+  "PICKUP TRUCK - STANDARD",
+  "SPECIAL PURPOSE VEHICLE"
+)
+
+class_encode <- setNames(1:length(class), class)
+
+#xử lý vehicle_class
+data <- data %>%
+  mutate(vehicle_class = class_encode[vehicle_class])
+
+
+data$vehicle_class <- factor(data$vehicle_class)
+
+#vẽ biểu đồ vehicle_class
+ggplot(data, aes(x = vehicle_class)) +
+  geom_bar() +
+  labs(title = "Vehicle Classes After Encoding", x = "Vehicle Class", y = "Count")
+
+
+#Mã hóa Transmission, Fuel Type theo kiểu nhị phân
+data <- data %>%
+  mutate(
+    transmission_type = str_match(transmission, "([A-Za-z]+)")[, 2]
+  ) %>%
+  #xóa cột ban đầu
+  select(-transmission)
+
+#biểu đồ tranmission
+ggplot(data, aes(x = transmission_type)) +
+  geom_bar() +
+  labs(title = "Transmission Types", x = "Transmission Type", y = "Count")
+                            
+data <- dummy_cols(data, 
+                 select_columns = c("fuel_type", "transmission_type"),
+                 remove_selected_columns = TRUE)
+
+
+#Biểu đồ ma trận tương quan
+numeric_data <- data[, sapply(data, is.numeric)]
+correlation_matrix <- cor(numeric_data)
+corrplot(correlation_matrix, method = "color", addCoef.col = "black",
+         number.cex = 0.4,
+         tl.cex = 0.4, cl.cex = 0.7, tl.col = "black")
+
+
+```
+<br>
+- Nhiên liệu tiêu thụ kết hợp, nhiên liệu tiêu thụ trong thành phvà nhiên liệu tiêu thụ trên cao tốc có hệ số tương quan rất lớn (hơn 95%) <br>
+- Lượng khí thải CO2 có liên quan nhiều với thể tích dịch chuyển động cơ và số xi lanh và lượng nhiên liệu tiêu thụ <br>
+- Do các biến đa cộng tuyến(mối tương quan mạnh với nhau, đặc biệt là biến nhị phân fuel_type_Z) nên ta loại bỏ các biến <br>
+```{r code, echo=TRUE}
+
+data = data %>% select(-fuel_type_Z, -transmission_type_M)
+data = data %>% select(-fuel_consumption_city_l_100_km, -fuel_consumption_hwy_l_100_km)
+```
+# Xây dựng mô hình hồi quy tuyến tính đa biến 
+```{r code1, echo=TRUE}
+#tách dataset thành 2 tập train và set
+set.seed(123)
+train_index = sample(1:nrow(data), 0.7*nrow(data))
+train_data = data[train_index,]
+test_data = data[-train_index,]
+
+# b. fit mô hình hồi quy
+model_mlr_train <- lm(co2_emissions_g_km ~ . , data = train_data)
+summary(model_mlr_train)
+vif(model_mlr_train)
+# c. dự đoán 
+predictions = predict(model_mlr_train, newdata = test_data)
+
+# d. tính rmse
+rmse = sqrt(mean((test_data$co2_emissions_g_km - predictions)^2))
+# e. tính r^2
+r_squared = 1 - sum((test_data$co2_emissions_g_km - predictions)^2) / sum((test_data$co2_emissions_g_km - mean(test_data$co2_emissions_g_km))^2)
+c(rmse, r_squared)
+
+```
+Có vẻ mô hình bị overfit do R^2 ~ 1, quá trình xây dựng mô hình hồi quy chưa loại bỏ được hết các biến đa cộng tuyến hoặc chưa scale được dữ liệu, các biến quá phức tạp. Ta có thể thêm các ràng buộc hồi quy Ridge Regression hoặc Lasso Regression để xử lý.
+## 3. Nhận xét và kết luận
+
+### Nhận xét:
+
+Dựa trên mô hình hồi quy tuyến tính được xây dựng để dự đoán lượng khí thải CO2 từ các phương tiện giao thông, chúng ta có thể rút ra một số kết luận quan trọng:
+
+1. **Ảnh hưởng của Dung tích động cơ (Engine Size):**  
+   Dung tích động cơ có mối quan hệ trực tiếp với lượng khí thải CO2. Xe có động cơ lớn thường tiêu thụ nhiều nhiên liệu hơn, dẫn đến lượng khí thải CO2 cao hơn. Điều này là hợp lý vì động cơ lớn yêu cầu nhiều nhiên liệu hơn để vận hành, đồng nghĩa với việc thải ra nhiều CO2.
+
+2. **Ảnh hưởng của Mức tiêu thụ nhiên liệu (Fuel Consumption):**  
+   Mức tiêu thụ nhiên liệu kết hợp (L/100 km) cũng có ảnh hưởng lớn đến lượng khí thải CO2. Các xe tiêu thụ nhiều nhiên liệu sẽ tạo ra lượng khí thải CO2 lớn hơn. Điều này cho thấy việc giảm mức tiêu thụ nhiên liệu sẽ giúp giảm phát thải CO2.
+
+3. **Ảnh hưởng của Loại nhiên liệu (Fuel Type):**  
+   Các loại nhiên liệu khác nhau có mức độ phát thải CO2 khác nhau. Xe sử dụng nhiên liệu diesel hoặc nhiên liệu hóa thạch như xăng sẽ thải ra nhiều CO2 hơn so với các loại nhiên liệu tái tạo hoặc nhiên liệu sinh học (ethanol). Tuy nhiên, mô hình không thể hiện rõ mối quan hệ giữa loại nhiên liệu và khí thải CO2 do thiếu sự phân tích chi tiết trong mô hình.
+
+4. **Ảnh hưởng của Loại hộp số (Transmission):**  
+   Loại hộp số cũng có ảnh hưởng nhất định đến lượng khí thải CO2. Các xe sử dụng hộp số tự động có thể có mức tiêu thụ nhiên liệu cao hơn so với xe sử dụng hộp số tay, dẫn đến lượng khí thải CO2 cao hơn.
+
+### Kết luận:
+
+- **Giảm phát thải CO2 là cần thiết:**  
+   Dựa vào mô hình, ta thấy rằng việc cải thiện mức tiêu thụ nhiên liệu sẽ giúp giảm khí thải CO2. Các phương tiện giao thông cần được thiết kế để tiêu thụ ít nhiên liệu hơn và sử dụng các nguồn năng lượng thay thế như điện hoặc nhiên liệu tái tạo để giảm thiểu tác động xấu lên môi trường.
+
+- **Cải thiện công nghệ động cơ và nhiên liệu:**  
+   Công nghệ động cơ hiện đại như động cơ hybrid hoặc xe điện sẽ giúp giảm đáng kể khí thải CO2 từ các phương tiện giao thông. Ngoài ra, việc phát triển và sử dụng các nhiên liệu ít carbon hơn (như ethanol, khí nén tự nhiên) có thể giúp giảm khí thải CO2 từ ô tô.
+
+
+- **Nâng cao nhận thức cộng đồng:**  
+   Việc nâng cao nhận thức về tác động của các phương tiện giao thông đối với môi trường và khuyến khích người dân lựa chọn phương tiện ít phát thải sẽ giúp giảm thiểu ô nhiễm và bảo vệ sức khỏe cộng đồng.
+
+Tóm lại, việc giảm lượng phát thải CO2 từ các phương tiện giao thông là một mục tiêu quan trọng để bảo vệ môi trường và sức khỏe cộng đồng. Việc áp dụng các công nghệ xanh và cải thiện mức tiêu thụ nhiên liệu sẽ là những bước đi quan trọng để đạt được mục tiêu này.
