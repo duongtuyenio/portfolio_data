@@ -1,0 +1,796 @@
+---
+title: "FINAL PROJECT"
+date: "Ngày thực hành: 2025-01-14"
+output: html_document
+---
+
+```{=html}
+<style>
+  h1 {
+    text-align: center;  /* Căn giữa tiêu đề */
+  }
+  .author {
+    text-align: center;  /* Căn giữa phần tác giả */
+    font-size: 24px;    /* Kích thước chữ cho tác giả */
+  }
+  .date {
+    text-align: right;   /* Căn phải phần ngày */
+    margin-top: -20px;  /* Điều chỉnh khoảng cách nếu cần */
+  }
+</style>
+```
+
+# Project 1- Sports Data Analysis
+
+## 1. Khai báo thư viện cần thiết
+
+```{r}
+library(ggplot2)
+library(janitor)
+library(tidyverse)
+library(leaps)
+library(readr)
+library(dplyr)
+library(stringr)
+library(ggcorrplot)
+library(VIM)
+library(maps)
+library(viridis)
+library(tidyr)
+library(caret)
+```
+
+## 2. Tóm tắt, làm sạch, khái quát dữ liệu <br>
+
+Load data
+
+```{r}
+# data <- read_csv("C:/Users/Admin/Downloads/Compressed/datasets-20240929/fifa_eda_stats.csv")
+data <- read_csv("C:/Users/nam/Downloads/fifa_eda_stats.csv")
+# data <- read_csv("C:/Users/Dell/Downloads/HK1 năm 3/XLSL/fifa_eda_stats.csv")
+# data <- read_csv("C:/Users/khain/Downloads/fifa_eda_stats.csv")
+summary(data)
+```
+
+Clean data
+
+```{r}
+data <- data|> clean_names()
+data <- data|> distinct()
+```
+
+Vẽ histogram cho missing
+
+```{r}
+aggr(data, col=c('blue', 'red'), numbers=TRUE, sortVars=TRUE, labels=names(data), cex.axis=.6, cex.numbers = .7, gap=3, ylab=c("Histogram of missing data", "Pattern"))
+str(data)
+```
+
+```{r}
+#kiểm tra na ở cột nào
+colSums(is.na(data))
+```
+
+Bỏ cột jesey_number, loaned_from
+
+```{r drop jesey_number, loaned_from}
+#data <- data|> select(-c(jersey_number, loaned_from))
+```
+
+Hàm chuyển đổi giá trị tiền tệ
+
+```{r convert value1}
+convert_value <- function(value) {
+  # Xóa ký tự '€'
+  value <- gsub("€", "", value)
+  # Kiểm tra và thực hiện phép nhân
+  if (grepl("K", value)) {
+    value <- as.numeric(gsub("K", "", value)) * 1000
+  } else if (grepl("M", value)) {
+    value <- as.numeric(gsub("M", "", value)) * 1000000
+  } else {
+    value <- as.numeric(value)
+  }
+  return(value)
+}
+
+```
+
+Sử dụng hàm lên các cột có giá tiền
+
+```{r convert value2}
+data$wage <- sapply(data$wage, convert_value)
+data$value <- sapply(data$value, convert_value)
+data$release_clause <- sapply(data$release_clause, convert_value)
+```
+
+Xét cột body_type
+
+```{r}
+table(data$body_type)
+```
+
+Cột body_type nói về vóc dáng các cầu thủ, điều này không ảnh hưởng lắm đến việc phân tích cũng như thống kê và dự đoán nên ta sẽ xóa cột này
+
+```{r}
+data <- data|> select(-c(body_type))
+```
+
+Kiểm tra cột contract_valid_until
+
+```{r}
+str(data$contract_valid_until)
+table(data$contract_valid_until)
+```
+
+Xóa dữ liệu trước dấu phẩy cột contract_valid_until, chuyển định dạng char thành num
+
+```{r}
+data$contract_valid_until <- sub(".*,", "", data$contract_valid_until)
+data$contract_valid_until <- as.numeric(data$contract_valid_until)
+```
+
+```{r}
+str(data)
+table(data$contract_valid_until)
+```
+
+Đổi weight từ lbs sang kg
+
+```{r}
+data$weight <- sub("lbs", "", data$weight)
+data$weight <- as.numeric(data$weight)
+data$weight <- data$weight * 0.453592
+data$weight <- round(data$weight)
+table(data$weight)
+```
+
+Đổi height từ feet, inch sang cm
+
+```{r}
+convert_to_cm <- function(height) {
+  # Tách feet và inch
+  parts <- strsplit(height, "'")[[1]]
+  feet <- as.numeric(parts[1])  # Lấy phần feet
+  inch <- as.numeric(parts[2])  # Lấy phần inch
+  # Chuyển đổi sang cm
+  cm <- feet * 30.48 + inch * 2.54
+  return(cm)
+}
+data$height <- sapply(data$height, convert_to_cm)
+data$height <- round(data$height)
+table(data$height)
+```
+
+Đổi tên 2 cột weight và height
+
+```{r}
+data <- data|> rename(weight_kg = weight)
+data <- data|> rename(height_cm = height)
+```
+
+Kiểm tra lại các giá trị nan
+
+```{r}
+colSums(is.na(data))
+```
+
+Xem giá trị lớn nhất và nhỏ nhất của cột contract_valid_until và joined
+
+```{r}
+min(data$contract_valid_until, na.rm = TRUE)
+max(data$contract_valid_until, na.rm = TRUE)
+min(data$joined, na.rm = TRUE)
+max(data$joined, na.rm = TRUE)
+```
+
+Xem giá trị nhỏ nhất của cột release_clause
+
+```{r}
+
+min(data$release_clause, na.rm = TRUE)
+```
+
+Đối với cột contract_valid_until, do dataset ở năm 2018, ta cũng không có một thời điểm cụ thể để làm mốc xác định các cầu thủ nào sẽ hết hạn hợp đồng trước khi ta mua, tức là ta không xác định được giá trị các cầu thủ do không biết có cần tính thêm release_clause (phí phá vỡ hợp đồng) hay không, do đó ta sẽ hiểu rằng các cầu thủ không có dữ liệu ở release_clause, tức là không có phí phá vỡ hợp đồng nghĩa là giá trị sẽ là 0 nên ta sẽ điền giá trị 0 vào các cầu thủ không có dữ liệu ở release_clause. Còn các cầu thủ có dữ liệu ở release_clause, ta sẽ giữ nguyên giá trị của cột này và tính vào giá trị để chuyển nhượng và đạt được 1 cầu thủ.
+
+```{r}
+data <- data|> mutate(release_clause = ifelse(is.na(release_clause), 0, release_clause))
+str(data)
+```
+
+Sau đó, do contract_valid_until và joined không ảnh hưởng lắm đến việc phân tích nữa nên ta sẽ bỏ 2 cột này.
+
+```{r}
+data <- data|> select(-c(contract_valid_until, joined))
+```
+
+Kiểm tra lại dữ liệu ở các cột chỉ số cầu thủ, trước hết ta kiểm tra lại cột volleys
+
+```{r}
+print(data[is.na(data$volleys),])
+```
+
+Ta có thể thấy là 48 cầu thủ này đều bị thiếu dữ liệu ở các cột chỉ số, mà các cột này quan trọng do nó là chỉ số chi tiết để đánh giá cầu thủ nên ta sẽ xóa các cầu thủ này
+
+```{r}
+data <- data[!is.na(data$volleys),]
+```
+
+Ta kiểm tra lại lần nữa
+
+```{r}
+colSums(is.na(data))
+```
+
+Xử lí cột club và position
+
+```{r}
+print(data[is.na(data$club),])
+```
+
+Đối với các cầu thủ không có dữ liệu ở club, ta có thể thấy value và wage cũng sẽ có giá trị bằng 0, tức đây là các cầu thủ tự do, do đó ta sẽ điền giá trị "Free Agent" vào cột club của các cầu thủ này
+
+```{r}
+data <- data|> mutate(club = ifelse(is.na(club), "Free Agent", club))
+```
+
+Với các cầu thủ không có dữ liệu ở position, ta sẽ cần cho tập test để xây dựng mô hình dự đoán position của các cầu thủ đó dựa vào dữ liệu của các chỉ số chi tiết của các cầu thủ đó, do đó ta sẽ giữ lại các cầu thủ này ở tập data, và xóa các cầu thủ này ở tập data_clean
+
+```{r}
+data_clean <- data[!is.na(data$position),]
+```
+
+Ta tiếp tục kiểm tra lại data_clean
+
+```{r}
+colSums(is.na(data_clean))
+```
+
+Ở đây ta sẽ xử lí dữ liệu để thống kê các chỉ số trung bình của từng vị trí của cầu thủ và sau đó tìm ra vị trí tốt nhất của từng chỉ số.
+
+```{r}
+#Thống kê cho vị trí thủ môn
+data_gk = data[data$position == "GK",]
+#Bỏ tất cả cột từ đầu đến cột weight_kg
+data_gk <- data_gk[ , 19:(ncol(data_gk)-3)]
+#Tính trung bình các chỉ số của data_gk
+data_gk_mean <- data_gk |> summarise(across(everything(), \(x) mean(x, na.rm = TRUE)))
+#Thêm cột pos = Goalkeeper ở cột đầu tiên
+data_gk_mean <- data_gk_mean |> mutate(pos = "Goalkeeper") |> select(pos, everything())
+
+#Thống kê cho vị trí hậu vệ
+data_def = data[data$position == "CB" | data$position == "LB" | data$position == "RB" | data$position == "LCB" | data$position == "RCB" | data$position == "LWB" | data$position == "RWB",]
+#Bỏ tất cả cột từ đầu đến cột weight_kg
+data_def <- data_def[ , 19:(ncol(data_def)-3)]
+#Tính trung bình các chỉ số của data_def
+data_def_mean <- data_def |> summarise(across(everything(), \(x) mean(x, na.rm = TRUE)))
+#Thêm cột pos = Defender ở cột đầu tiên
+data_def_mean <- data_def_mean |> mutate(pos = "Defender") |> select(pos, everything())
+
+#Thống kê cho vị trí tiền vệ
+data_mid = data[data$position == "CDM" | data$position == "CM" | data$position == "CAM" | data$position == "LDM" | data$position == "RDM" | data$position == "LM" | data$position == "RM" | data$position == "LCM" | data$position == "RCM" | data$position == "LAM" | data$position == "RAM",]
+#Bỏ tất cả cột từ đầu đến cột weight_kg
+data_mid <- data_mid[ , 19:(ncol(data_mid)-3)]
+#Tính trung bình các chỉ số của data_mid
+data_mid_mean <- data_mid |> summarise(across(everything(), \(x) mean(x, na.rm = TRUE)))
+#Thêm cột pos = Midfielder ở cột đầu tiên
+data_mid_mean <- data_mid_mean |> mutate(pos = "Midfielder") |> select(pos, everything())
+
+#Thống kê cho vị trí tiền đạo
+data_fwd = data[data$position == "ST" | data$position == "CF" | data$position == "LW" | data$position == "RW" | data$position == "LS" | data$position == "RS",]
+#Bỏ tất cả cột từ đầu đến cột weight_kg
+data_fwd <- data_fwd[ , 19:(ncol(data_fwd)-3)]
+#Tính trung bình các chỉ số của data_fwd
+data_fwd_mean <- data_fwd |> summarise(across(everything(), \(x) mean(x, na.rm = TRUE)))
+#Thêm cột pos = Forward ở cột đầu tiên
+data_fwd_mean <- data_fwd_mean |> mutate(pos = "Forward") |> select(pos, everything())
+
+
+#Ghép 4 dòng thành 1 dataframe mới
+data_mean <- rbind(data_gk_mean, data_def_mean, data_mid_mean, data_fwd_mean)
+
+#Tạo data frame rỗng có cùng tên cột với data_mean
+data_best <- data.frame(matrix(ncol = ncol(data_mean), nrow = 1))
+
+#Tạo data frame mới để lưu vị trí tốt nhất của từng chỉ số
+data_best[1,1] = "Optimal"
+colnames(data_best)[1] <- "pos"
+for (i in 2:ncol(data_mean)) {
+  tmp = as.numeric(unlist(data_mean[,i]))
+  idx_row = which.max(tmp)
+  best = data_mean[[idx_row,1]]
+  data_best[i] <- best
+  colnames(data_best)[i] <- colnames(data_mean)[i]
+  
+}
+
+data_mean <- rbind(data_mean, data_best)
+print(data_mean)
+```
+
+Ta gán position_data là dataframe mới để tổng quát hóa vị trí của các cầu thủ hàng tiền đạo, hàng tiền vệ, hàng hậu vệ, và thủ môn
+
+```{r}
+position_data = data_clean |> mutate(position = ifelse(position %in% c("GK"), "GK",
+                                      ifelse(position %in% c("CB", "LB", "RB", "LCB", "RCB", "LWB", "RWB"), "DF",
+                                      ifelse(position %in% c("CDM", "CM", "CAM", "LDM", "RDM", "LM", "RM", "LCM", "RCM", "LAM", "RAM"),
+                                      "MF", 
+                                      "FW"))))
+```
+
+Kiểm tra dữ liệu work_rate
+
+```{r}
+table(position_data$work_rate)
+```
+
+Tách work_rate thành hai phần: Attack và Defense và thay cột work_rate bằng 2 cột mới là work_rate_attack và work_rate_defense
+
+```{r}
+position_data <- position_data|> separate(work_rate, into = c("work_rate_attack", "work_rate_defense"), sep = "/")
+```
+
+Tạo bảng để thống kê số lượng "Low", "Medium", "High" trong cột work_rate_attack và work_rate_defense đối với "FW", "MF", "DF", "GK"
+
+```{r}
+
+table(position_data$work_rate_attack, position_data$position)
+table(position_data$work_rate_defense, position_data$position)
+```
+
+Có thể thấy rằng, với vị trí thủ môn, chỉ số work_rate_attack và work_rate_defense mặc định là Medium.
+
+Nhìn chung, dữ liệu về work_rate cũng không ảnh hưởng đến vị trí của cầu thủ mà nó thể hiện lối chơi của cầu thủ đó, do đó ta sẽ in ra tên, overall và work_rate của top 10 cầu thủ overall cao nhất để xem xét rồi xóa 2 cột này.
+
+```{r}
+print(position_data|> arrange(desc(overall))|> select(name, overall, work_rate_attack, work_rate_defense)|> head(10))
+```
+
+```{r}
+data_clean <- data_clean|> select(-c(work_rate))
+data <- data|> select(-c(work_rate))
+```
+
+## 3. Trích xuất đặc trưng và thống kê
+
+Vậy là ta đã xử lí xong dữ liệu, tiếp theo ta sẽ tiến hành thống kê, phân tích dữ liệu
+
+Dựa vào nationality, ta có thể vẽ được bản đồ thế giới với số lượng cầu thủ từ mỗi quốc gia
+
+```{r}
+#plot of number of players in each country
+
+#adjust plot size
+options(repr.plot.width = 12, repr.plot.height = 8)
+
+#world map data
+world_map <- map_data("world")
+
+#calculate number of players
+numofplayers <- world_map %>% 
+  mutate(region = as.character(region)) %>% 
+  left_join((data %>% mutate(nationality = as.character(nationality),
+                             nationality = if_else(nationality %in% "England", 
+                                                   "UK", nationality)) %>%
+               count(nationality, name = "Number of Player") %>%
+               rename(region = nationality) %>%
+               mutate(region = as.character(region))), by = "region")
+
+ggplot(numofplayers, aes(long, lat, group = group)) +
+  geom_polygon(aes(fill = `Number of Player`), color = "white") +
+  scale_fill_viridis_c(option = "C", name = "Number of Player") +
+  theme_void() +
+  labs(title = "Number of Player with ggplot2") +
+  theme(legend.position = "right")
+```
+
+Top 10 quốc gia nhiều cầu thủ nhất
+
+```{r}
+numofplayers|> distinct(region, `Number of Player`)|> arrange(desc(`Number of Player`))|> head(10)
+```
+
+Top 20 các quốc gia có trung bình tiềm năng cao nhất
+
+```{r}
+average_data = data %>%
+  group_by(nationality) %>%
+  summarise(avg_potential = mean(potential), numofplayers = sum(potential) / mean(potential)) %>%
+  arrange(desc(avg_potential)) %>%
+  head(20)
+average_data
+```
+
+Dựa vào bảng trên, ta có thể thấy các quốc gia có trung bình tiềm năng cao nhất là do quốc gia có ít cầu thủ nên trung bình sẽ cao, do đó ta sẽ tính điểm tiềm năng trung bình cho 20 quốc gia có nhiều cầu thủ nhất
+
+```{r}
+average_data = data %>%
+  group_by(nationality) %>%
+  summarise(avg_potential = mean(potential), numofplayers = sum(potential) / mean(potential)) %>%
+  arrange(desc(numofplayers)) %>%
+  head(20) %>%
+  ggplot(aes(x = nationality, y = avg_potential)) +
+  geom_col(fill = "blue", color = "black") +
+  labs(title = "Potential of countries has the most number of players", x = "Country", y = "Average potential") +
+  theme_minimal() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+average_data
+```
+
+Top 10 cầu thủ có overall cao nhất
+
+```{r}
+top10overall = data_clean|> arrange(desc(overall))|> select(name, overall)|> head(10)
+top10overall
+```
+
+Top 10 cầu thủ có giá trị cao nhất
+
+```{r}
+top10value = data_clean|> arrange(desc(value))|> select(name, value)|> head(10)
+top10value
+```
+
+Top 10 câu lạc bộ có tổng giá trị thị trường cao nhất
+
+```{r}
+top10club = data_clean|> group_by(club)|> summarise(total_value = sum(value))|> arrange(desc(total_value))|> head(10)
+top10club
+```
+
+Ta xét xem các các cầu thủ nếu có potential cao thì overall sẽ cao hay không thông qua biểu đồ thể hiện mối quan hệ giữa potential và overall
+
+```{r}
+potential_data = data %>%
+  ggplot(aes(x = potential, y = overall)) + geom_point(color = "blue") +geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Relation of overall and potential", x = "Potential", y = "Overall") +
+  theme_minimal()
+potential_data
+```
+
+Tính hệ số tương quan giữa Potential và Overall
+
+```{r}
+correlation_potential_overall = cor(data$potential, data$overall, method = "pearson")
+correlation_potential_overall
+```
+
+Ta thấy rằng potential và overall có tương quan mạnh, có thể nói rằng potential cao thì overall cũng cao, nhưng không phải lúc nào cũng đúng, vì có thể cầu thủ có potential cao nhưng không được đánh giá cao về overall, có thể do cầu thủ đó chưa phát huy hết khả năng của mình.
+
+Ta kiểm tra xem các cầu thủ cao tuổi có còn được đánh giá cao hay không?
+
+```{r}
+age_data = data %>%
+  ggplot(aes(x = age, y = overall)) + geom_point(color = "blue") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Relation of age and overall", x = "age", y = "overall") +
+  theme_minimal()
+age_data
+```
+
+Tính tương quan giữa age và overall
+
+```{r}
+correlation_age_overall = cor(data$age, data$overall, method = "pearson")
+correlation_age_overall
+
+```
+
+Qua biểu đồ cũng như giá trị tương quan Pearson, ta thấy rằng age và overall tương quan không mạnh, có thể nói rằng age không ảnh hưởng nhiều đến overall của cầu thủc
+
+Ta sẽ tính tương quan giữa các chỉ số của cầu thủ với nhau Ở đây ta sẽ tính shot_power với finishing của các cầu thủ thuộc vị trí tiền đạo
+
+Spearman correlation coefficient phù hợp hơn với dữ liệu không chuẩn, tuy nhiên với dữ liệu này có giá trị trùng nhau nhiều mà Spearman dựa trên các thứ hạng khác biệt giữa các giá trị, và khi có ties, phương pháp này không thể áp dụng chính xác. Do đó, ta sẽ tính Kendall và Pearson để so sánh.
+
+```{r}
+kor <- position_data %>%
+  filter(position_data$position == "FW")%>%
+  select(name, finishing, shot_power, preferred_foot)
+shapiro.test(kor$finishing); shapiro.test(kor$shot_power)
+#Finishing and Shot Power are not normal. Spearman correlation coefficient is much suitable to using.
+cor.test(kor$shot_power, kor$finishing, method = "pearson")
+cor.test(kor$shot_power, kor$finishing, method = "kendall")
+hypo <- cor.test(kor$shot_power, kor$finishing, method = "pearson")
+
+options(repr.plot.width = 15, repr.plot.height = 8)
+
+ggplot(kor, aes(shot_power, finishing, label = ".", color = preferred_foot))+
+  geom_text()+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  geom_jitter(alpha = 0.3, size = 2.5, width = 0.3, height = 0.3)+
+  geom_smooth(method = "lm", color = "gray40", lty = 2, se = FALSE, size = 0.6)+
+  scale_color_manual(values = c("orangered","steelblue"))+
+  labs(title = paste("Pearson Correlation Coefficient:", round(hypo$estimate, digits = 2)),
+       subtitle = "p-value < 0.05")
+```
+
+Ta thấy mối tương quan giữa shot_power và finishing khá cao đối với cả cầu thủ thuận chân trái và thuận chân phải
+
+```{r}
+kor <- position_data %>%
+  filter(position_data$position == "MF")%>%
+  select(name, long_passing, vision, preferred_foot)
+cor.test(kor$vision, kor$long_passing, method = "pearson")
+cor.test(kor$vision, kor$long_passing, method = "kendall")
+hypo <- cor.test(kor$vision, kor$long_passing, method = "pearson")
+
+options(repr.plot.width = 15, repr.plot.height = 8)
+
+ggplot(kor, aes(vision, long_passing, label = ".", color = preferred_foot))+
+  geom_text()+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  geom_jitter(alpha = 0.3, size = 2.5, width = 0.3, height = 0.3)+
+  geom_smooth(method = "lm", color = "gray40", lty = 2, se = FALSE, size = 0.6)+
+  scale_color_manual(values = c("orangered","steelblue"))+
+  labs(title = paste("Pearson Correlation Coefficient:", round(hypo$estimate, digits = 2)),
+       subtitle = "p-value < 0.05")
+```
+
+Mối tương quan giữa long_passing và vision của cầu thủ tiền vệ cũng khá cao
+
+```{r}
+kor <- position_data %>%
+  filter(position_data$position == "DF")%>%
+  select(name, aggression, interceptions, preferred_foot)
+cor.test(kor$aggression, kor$interceptions, method = "pearson")
+cor.test(kor$aggression, kor$interceptions, method = "kendall")
+hypo <- cor.test(kor$aggression, kor$interceptions, method = "pearson")
+
+options(repr.plot.width = 15, repr.plot.height = 8)
+
+ggplot(kor, aes(aggression, interceptions, label = ".", color = preferred_foot))+
+  geom_text()+
+  theme_minimal()+
+  theme(legend.position = "bottom")+
+  geom_jitter(alpha = 0.3, size = 2.5, width = 0.3, height = 0.3)+
+  geom_smooth(method = "lm", color = "gray40", lty = 2, se = FALSE, size = 0.6)+
+  scale_color_manual(values = c("orangered","steelblue"))+
+  labs(title = paste("Pearson Correlation Coefficient:", round(hypo$estimate, digits = 2)),
+       subtitle = "p-value < 0.05")
+```
+
+Ta thấy mối tương quan giữa aggression và interceptions của cầu thủ hậu vệ cũng khá cao, tuy nhiên vẫn có khá nhiều trường hợp ngoại lệ đối với các cầu thủ có chỉ số thấp hơn 60
+
+## 4. Xây dụng các mô hình
+
+### 4.1. Mô hình random forest để dự đoán vị trí của cầu thủ
+
+Ta sẽ xây dựng mô hình random forest để dự đoán vị trí của cầu thủ dựa vào các chỉ số của cầu thủ, sau đó sử dụng mô hình này để dự đoán vị trí của các cầu thủ không có dữ liệu ở cột position
+
+Chuẩn bị dữ liệu:
+
+Ta sẽ tạo dataframe fifa_data từ data_clean để tổng quát hóa vị trí của cầu thủ, sau đó ta sử dụng cột vị trí và các chỉ số của cầu thủ để chia ra thành các tập train_set và test_set, trong đó train_set sẽ chứa các cầu thủ có dữ liệu ở cột position và test_set sẽ chứa các cầu thủ không có dữ liệu ở cột position và sẽ được dự đoán thông qua mô hình
+
+```{r}
+fifa_data = data |> mutate(position = ifelse(position %in% c("GK"), "GK",
+                                      ifelse(position %in% c("CB", "LB", "RB", "LCB", "RCB", "LWB", "RWB"), "DF",
+                                      ifelse(position %in% c("CDM", "CM", "CAM", "LDM", "RDM", "LM", "RM", "LCM", "RCM", "LAM", "RAM"),
+                                      "MF", 
+                                      ifelse(position %in% c(NA), NA, 
+                                      "FW")))))
+fifa_data = fifa_data[,c(14,19:(ncol(fifa_data)))]
+test_set = fifa_data[is.na(fifa_data$position),]
+train_set = fifa_data[!is.na(fifa_data$position),]
+
+```
+
+Ta bỏ 3 cột cuối của train_set, test_set và tạo model_data chứa train_set dể train mô hình
+
+```{r}
+model_data <- train_set[ , 1:(ncol(train_set)-3)]
+test_set <- test_set[ , 1:(ncol(test_set)-3)]
+print(model_data)
+
+#Khởi tạo mô hình random forest cho biến model_best
+
+# Chia dữ liệu
+set.seed(135)
+train_index <- createDataPartition(model_data$position, p = 0.8, list = FALSE)
+train_data <- model_data[train_index, ]
+valid_data <- model_data[-train_index, ]
+
+# Mô hình Random Forest
+rf_model <- train(
+  position ~ ., data = train_data,
+  method = "rf", trControl = trainControl(method = "cv", number = 5)
+)
+
+
+# Dự đoán để đánh giá
+predictions <- predict(rf_model, newdata = valid_data)
+
+# Đánh giá hiệu suất
+# Chuyển đổi valid_data$position thành factor
+confusionMatrix(predictions, as.factor(valid_data$position))
+
+confusionMatrix(predictions, as.factor(valid_data$position))$overall["Accuracy"]
+#Sử dụng mô hình với test set
+test_set$position <- predict(rf_model, newdata = test_set)
+#In ra tất cả cột trong test_set
+test_set
+```
+
+### 4.2. Mô hình hồi quy tuyến tính cho value của cầu thủ
+
+Đầu tiên là tạo dataframe fifa_data2 từ data_clean, sau đó tạo dataframe model_data2 từ fifa_data2 với các cột value, overall, wage, release_clause, international_reputation, potential, age.
+
+```{r}
+fifa_data2 <- data_clean
+model_data2 <- fifa_data2[, c("value", "overall", "wage", "release_clause", "international_reputation", "potential", "age")]
+```
+
+Sau đó tính toán ma trận tương quan giữa các cột trong model_data2
+
+```{r}
+cor_matrix <- cor(model_data2, use = "complete.obs")
+print(cor_matrix)
+```
+
+Ta thấy age không có tính tương quan cao với value, do đó ta sẽ không dùng cột age trong mô hình hồi quy tuyến tính <br> Sau đó xây dựng mô hình hồi quy tuyến tính cho value dựa trên các cột overall, wage, release_clause, potential, international_reputation trong model_data2.
+
+```{r}
+#scale dữ liệu và giữ nguyên dataframe
+model_data2 <- model_data2 |> scale() |> as.data.frame()
+# Mô hình hồi quy tuyến tính
+lm_model <- lm(value ~ overall + wage + release_clause + potential + international_reputation , data = model_data2)
+
+# Kiểm tra kết quả
+summary(lm_model)
+```
+
+Kiểm tra giả định: áp dụng phương pháp bootstrap để ước lượng khoảng tin cậy và kiểm định giả thuyết βj = 0
+
+```{r}
+#Sử dụng hàm boot() để thực hiện bootstrap
+library(boot)
+set.seed(123)
+fun_boot_md <- function(data, ind, formula, ...){
+  data_new <- data[ind,]
+  out_md <- lm(formula = formula, data = data_new, ...)
+  return(out_md$coefficients)
+}
+set.seed(123)
+out_boot_lm_model <- boot(data = model_data2, statistic = fun_boot_md, R = 1000,
+                          formula = value ~ overall + wage + release_clause + potential + international_reputation)
+out_boot_lm_model
+
+boot.ci(out_boot_lm_model, index = 1, type = "perc", conf = 0.95)
+boot.ci(out_boot_lm_model, index = 2, type = "perc", conf = 0.95)
+boot.ci(out_boot_lm_model, index = 3, type = "perc", conf = 0.95)
+boot.ci(out_boot_lm_model, index = 4, type = "perc", conf = 0.95)
+boot.ci(out_boot_lm_model, index = 5, type = "perc", conf = 0.95)
+boot.ci(out_boot_lm_model, index = 6, type = "perc", conf = 0.95)
+
+#Ta tính p-value cho kiểm định giả thuyết βj = 0
+pvals <- sapply(1:ncol(out_boot_lm_model$t),function(x) {
+  qt0 <- mean(out_boot_lm_model$t[, x] <= 0)
+  if (qt0 < 0.5) {
+    return(2*qt0)
+  } else {
+    return(2*(1 - qt0))
+  }
+})
+pvals
+#tính rmse
+rmse_lm_model <- sqrt(mean(lm_model$residuals^2))
+rmse_lm_model
+```
+
+```{r}
+ggplot(lm_model,mapping =  aes(.fitted, .resid)) +
+  geom_point() +
+  geom_smooth(method = "loess",se = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  xlab("Fitted values") + ylab("Residuals") +
+  theme_bw()
+```
+
+Kiểm tra tính tuyến tính từng phần của thành phần overall trong mô hình do overall có tương quan cao với value
+
+```{r}
+
+terms_lm_model <- predict(lm_model, type = "terms")
+head(terms_lm_model)
+part_resid_lm_model <- residuals(lm_model, type = "partial")
+head(part_resid_lm_model)
+
+data_part_resid_lm_model <- tibble(overall = model_data2$overall,
+                                   term_overall = terms_lm_model[, "overall"],
+                                   part_resid_overall = part_resid_lm_model[, "overall"])
+
+ggplot(data_part_resid_lm_model, aes(x = overall, y = part_resid_overall)) +
+  geom_point() +
+  geom_smooth(method = "loess", se = FALSE) +
+  xlab("Overall") + ylab("Partial Residuals") +
+  theme_bw()
+```
+
+Kiểm tra tính đồng nhất phương sai với biểu đồ Scale-Location
+
+```{r}
+ggplot(lm_model, aes(.fitted, sqrt(abs(.stdresid)))) +
+  geom_point(na.rm = TRUE) +
+  geom_smooth(method = "loess",na.rm = TRUE, se = FALSE) +
+  xlab("Fitted values") + ylab("Sqrt(|Standardized Residuals|)") +
+  theme_bw()
+```
+
+Kiểm tra điểm ngoại lai với biểu đồ Residuals và Leverage
+
+```{r}
+ggplot(lm_model, aes(x = .hat, y = .stdresid)) +
+  geom_point(aes(size = .cooksd)) +
+  xlab("Leverage") + ylab("Standardized Residuals") +
+  scale_size_continuous("Cook's Distance", range = c(1, 6)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+std_resid_lm_model <- rstandard(lm_model)
+hat_values_lm_model <- hatvalues(lm_model)
+cooks_D_lm_model <- cooks.distance(lm_model)
+data_cooks_lm_model <- tibble(id_point = 1:nrow(model_data2),
+                              rstand = std_resid_lm_model, hats = hat_values_lm_model,
+                              cooks = cooks_D_lm_model, value = model_data2$value)
+data_cooks_lm_model |> arrange(desc(cooks))
+
+```
+
+Kiểm tra đa cộng tuyến
+
+```{r}
+library(car)
+vif(lm_model)
+```
+
+Kết quả cho thấy không có hiện tượng đa cộng tuyến
+
+### 4.3. Công cụ gợi ý cầu thủ cho huấn luyện viên theo số tiền và vị trí
+
+Ta sẽ xây dựng một công cụ gợi ý cầu thủ cho huấn luyện viên dựa vào số tiền mà huấn luyện viên đó có và vị trí mà huấn luyện viên đó cần cầu thủ, sau đó sẽ gợi ý cho huấn luyện viên top 20 cầu thủ tốt nhất cho vị trí đó dựa vào số tiền mà huấn luyện viên đó có.
+
+Ta sẽ tao dataframe fifa_data3 từ data, sau đó thêm cột total_cost vào fifa_data3 để tính tổng chi phí để mua cầu thử đó, sau đó ta sẽ xây dựng hàm select_players_by_position để gợi ý cho huấn luyện viên top 20 cầu thủ tốt nhất cho vị trí đó dựa vào số tiền mà huấn luyện viên đó có.
+
+```{r}
+fifa_data3 <- data
+fifa_data3$total_cost <- fifa_data3$wage * 52 + fifa_data3$value + fifa_data3$release_clause
+
+select_players_by_position <- function(data, budget, position, top, detail){
+  filtered_data <- data[data$total_cost <= budget & data$position == position, ]
+  ranked_data <- filtered_data[order(filtered_data$overall, decreasing = TRUE), ]
+  #Chọn những chỉ số liên quan đến vị trí đó
+  position = ranked_data$position
+  if (detail == FALSE) {
+    #Chỉ hiện các thông tin cần thiết cho vị trí đó
+    position = ifelse(position %in% c("GK"), "Goalkeeper",
+    ifelse(position %in% c("CB", "LB", "RB", "LCB", "RCB", "LWB", "RWB"), "Defender",
+    ifelse(position %in% c("CDM", "CM", "CAM", "LDM", "RDM", "LM", "RM", "LCM", "RCM", "LAM", "RAM"),"Midfielder", 
+    ifelse(position %in% c("ST", "CF", "LW", "RW", "LS", "RS"), "Forward", "None"))))
+    
+    position_type = position[1]
+    col_list = c("name", "overall", "potential", "value", "wage", "release_clause")
+    if(as.character(position_type) == "None"){
+      return (ranked_data[1:top, ])
+    }
+    for(i in 1:ncol(data_mean)){
+      
+        if(as.character(data_mean[5,i]) == as.character(position_type)){
+            col_list = c(col_list, as.character(colnames(data_mean)[i]))
+        }
+    }
+    return (ranked_data[1:top, col_list])
+  }
+  return (ranked_data[1:top, ])
+}
+```
+
+Chọn 20 cầu thủ tốt nhất với kinh phí 10 triệu bảng, vị trí hậu vệ trung tâm và không cần thông tin chi tiết chỉ số (chỉ cần thông tin các chỉ số của vị trí đó)
+
+```{r}
+select_players_by_position(fifa_data3, 10000000, "CB", 20, detail = FALSE)
+```
+
+Chọn 20 cầu thủ tốt nhất với kinh phí 50 triệu bảng, vị trí tiền đạo cắm (ST) và cần nhiều thông tin chỉ số
+
+```{r}
+select_players_by_position(fifa_data3, 50000000, "ST", 20, detail = TRUE)
+```
